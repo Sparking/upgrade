@@ -13,29 +13,23 @@ typedef enum {
 } package_type_t;
 
 typedef struct {
-    char major;
-    char minor;
-    char patch;
-} patch_version_t;
+    uint8_t major;
+    uint8_t minor;
+    uint8_t patch;
+    char    compile[16 + 1];
+} package_version_t;
 
 typedef struct {
-    struct list_head node;
-    char *name;
-    char *version;
-    uint32_t *apply_id;
-    size_t    napply_id;
-    char  md5sum[32];
+    struct list_head  node;
+    package_version_t version;
+    char              md5sum[32];
+    char              name[128];
+    size_t            napply_id;
+    uint32_t          apply_id[0];
 } multi_os_blob_t;
 
-typedef struct {
-    struct list_head blobs;
-} multi_os_package_t;
+typedef multi_os_blob_t os_packge_t;
 
-typedef struct {
-    package_type_t type;
-    void *data;
-} package_t;
-
-extern package_t *read_package(const char *pkg);
+extern package_type_t read_package(const char *pkg, struct list_head *blobs);
 
 #endif /* __UPGRADE_PACKAGE_H__ */

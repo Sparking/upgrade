@@ -1,12 +1,12 @@
 ﻿#include <stdio.h>
 #include <string.h>
+#include <libgen.h>
 #include <limits.h>
 #include <unistd.h>
 #include <json-c/json.h>
 #include "common.h"
 #include "package.h"
 
-const char *const manifest_name = "manifest.json";
 const char *const cmd_check_md5sum = "tar -O -I zstd -xf %s %s | md5sum";
 const char *const cmd_extract_file = "tar -I zstd -xf %s -C %s %s";
 
@@ -44,11 +44,11 @@ int str2version(const char *str, package_version_t *ver)
 {
     unsigned int a, b, c;
 
-    if (str == NULL || ver === NULL) {
+    if (str == NULL || ver == NULL) {
         return -1;
     }
 
-    if ((sscanf(str, "%u.%u.%u.%.16s", &a, &b, &c, ver->compile)) != 4) {
+    if ((sscanf(str, "%u.%u.%u.%16s", &a, &b, &c, ver->compile)) != 4) {
         return -1;
     }
 
@@ -76,13 +76,22 @@ static multi_os_blob_t *read_multi_os_blob_from_json_array_item(json_object *obj
     }
 
     n = sizeof(multi_os_blob_t) + i * sizeof(uint32_t);
-    if ((blob = (multi_os_blob_t *)malloc(sizeof(multi_os_blob_t)) + n) == NULL) {
+    if ((blob = (multi_os_blob_t *)malloc(n)) == NULL) {
         return NULL;
     }
 
     memset(blob, 0, n);
     blob->napply_id = i;
     INIT_LIST_HEAD(&blob->node);
+
+    for (i = 0; i < blob->napply_id; ++i) {
+        value = json_object_array_get_idx(key, i);
+        if (json_object_get_type(value) != json_type_int) {
+            goto failure;
+        }
+
+        blob->apply_id[i] = (uint32_t)json_object_get_uint64(value);
+    }
 
     if ((key = json_object_object_get(obj, "name")) == NULL
             || (str = json_object_get_string(key)) == NULL
@@ -102,15 +111,6 @@ static multi_os_blob_t *read_multi_os_blob_from_json_array_item(json_object *obj
             || (str = json_object_get_string(key)) == NULL
             || str2version(str, &blob->version) < 0) {
         goto failure;
-    }
-
-    for (i = 0; i < blob->napply_id; ++i) {
-        value = json_object_array_get_idx(key, i);
-        if (json_object_get_type(value) != json_type_int) {
-            goto failure;
-        }
-
-        blob->apply_id[i] = (uint32_t)json_object_get_uint64(value);
     }
 
     return blob;
@@ -155,41 +155,34 @@ failure:
 package_type_t read_package(const char *pkg, struct list_head *head)
 {
     int ret;
+    char md5sum[32 + 1];
     package_type_t t;
     json_object *obj;
     json_object *val;
-    char buff[PATH_MAX];
-    char path[PATH_MAX];
+    multi_os_blob_t *mos_tmp;
     multi_os_blob_t *mos_blob;
+    const char *const tmp_path = "/tmp/.upgrade_check_manifest";
+    const char *const manifest = "/tmp/.upgrade_check_manifest/manifest.json";
 
     t = PKG_UNKNOWN;
     if (pkg == NULL || head == NULL) {
         return t;
     }
 
-    if ((ret = shell_cmd_output("echo /tmp/.package_info_check_`date +%s`/", path,
-            sizeof(path))) < 0) {
+    if ((ret = shell_command("mkdir -p %s", tmp_path)) < 0) {
         return t;
     }
 
-    strip_string_crlf(path);
-    snprintf(buff, sizeof(buff), "mkdir -p '%s'", path);
-    if ((ret = system(buff)) < 0) {
+    if ((ret = shell_command(cmd_extract_file, pkg, tmp_path, "manifest.json")) < 0) {
+        remove(tmp_path);
         return t;
     }
 
-    snprintf(buff, sizeof(buff), cmd_extract_file, pkg, path, manifest_name);
-    if ((ret = system(buff)) < 0) {
-        remove(path);
+    if ((obj = json_object_from_file(manifest)) == NULL) {
+        remove(tmp_path);
         return t;
     }
-
-    snprintf(buff, sizeof(buff), "%s%s", path, manifest_name);
-    if ((obj = json_object_from_file(buff)) == NULL) {
-        remove(path);
-        return t;
-    }
-    remove(path);
+    remove(tmp_path);
 
     if ((val = json_object_object_get(obj, "type")) == NULL
             || (t = str2type(json_object_get_string(val))) == PKG_UNKNOWN) {
@@ -212,6 +205,20 @@ package_type_t read_package(const char *pkg, struct list_head *head)
     case PKG_MULTI_OS:
         if (read_multi_os_blobs_from_json_obj(val, head) < 0) {
             t = PKG_UNKNOWN;
+            break;
+        }
+
+        /* md5sum check */
+        list_for_each_entry(mos_blob, head, node) {
+            if (shell_command_output(md5sum, sizeof(md5sum), cmd_check_md5sum, pkg, mos_blob->name) < 0
+                    || memcmp(md5sum, mos_blob->md5sum, sizeof(mos_blob->md5sum)) != 0) {
+                list_for_each_entry_safe(mos_blob, mos_tmp, head, node) {
+                    list_del(&mos_blob->node);
+                    free(mos_blob);
+                }
+                t = PKG_UNKNOWN;
+                break;
+            }
         }
         break;
     case PKG_MULTI_PATCH:
@@ -237,7 +244,7 @@ int main(int argc, char *argv[])
         return -1;
     }
 
-    if ((type = read_package(argv[1], head)) == PKG_UNKNOWN) {
+    if ((type = read_package(argv[1], &head)) == PKG_UNKNOWN) {
         fprintf(stderr, "read invalid package\n");
         return -1;
     }

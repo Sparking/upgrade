@@ -1,11 +1,57 @@
-﻿#include <stdio.h>
-#include <errno.h>
+﻿#include <errno.h>
+#include <stdio.h>
+#include <stdarg.h>
+#include <stdlib.h>
+#include <limits.h>
 #include <unistd.h>
 #include <sys/stat.h>
 #include <sys/types.h>
 #include "common.h"
 
-size_t strip_string_crlf(char *str)
+int shell_command(const char *fmt, ...)
+{
+    int ret;
+    va_list ap;
+    char command[PATH_MAX];
+
+    va_start(ap, fmt);
+    ret = vsnprintf(command, sizeof(command), fmt, ap);
+    va_end(ap);
+    if (ret < 0) {
+        return -EINVAL;
+    }
+
+    return system(command);
+}
+
+int shell_command_output(char *output, size_t n, const char *fmt, ...)
+{
+    int ret;
+    FILE *fp;
+    va_list ap;
+    size_t size;
+    char command[PATH_MAX];
+
+    va_start(ap, fmt);
+    ret = vsnprintf(command, sizeof(command), fmt, ap);
+    va_end(ap);
+    if (ret < 0) {
+        return -EINVAL;
+    }
+
+    if ((fp = popen(command, "r")) == NULL) {
+        return -errno;
+    }
+
+    if ((size = fread(output, 1, n, fp)) == n) {
+        --size;
+    }
+    output[size] = '\0';
+
+    return pclose(fp);
+}
+
+size_t clear_line_crlf(char *str)
 {
     size_t i;
 
@@ -13,7 +59,7 @@ size_t strip_string_crlf(char *str)
         return 0;
     }
 
-    for (i = 0; str[i]; ++i) {
+    for (i = 0; str[i] != '\0'; ++i) {
         if (str[i] == '\r' || str[i] == '\n') {
             str[i] = '\0';
             break;
@@ -21,24 +67,6 @@ size_t strip_string_crlf(char *str)
     }
 
     return i;
-}
-
-int shell_cmd_output(const char *cmd, char *buff, const size_t size)
-{
-    size_t ret;
-    FILE *fp;
-
-    if (cmd == NULL || buff == NULL || size == 0) {
-        return -EINVAL;
-    }
-
-    if ((fp = popen(cmd, "r")) == NULL) {
-        return -errno;
-    }
-    ret = fread(buff, 1, size - 1, fp);
-    buff[ret] = '\0';
-
-    return pclose(fp);
 }
 
 bool file_exist(const char *path)

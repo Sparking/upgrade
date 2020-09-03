@@ -8,9 +8,11 @@
 #define BUFF_SIZE           4096
 #define ARRAY_SIZE(array)   (sizeof(array) / sizeof(*array))
 
-extern size_t strip_string_crlf(char *str);
+extern size_t clear_line_crlf(char *str);
 
-extern int shell_cmd_output(const char *cmd, char *buf, const size_t size);
+extern int shell_command(const char *fmt, ...);
+
+extern int shell_command_output(char *output, size_t n, const char *fmt, ...);
 
 extern bool file_exist(const char *path);
 

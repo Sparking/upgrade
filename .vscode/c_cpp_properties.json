@@ -4,7 +4,8 @@
             "name": "Win32",
             "includePath": [
                 "${workspaceFolder}/**",
-                "G:/Software/json-c/include"
+                "G:/Software/json-c/include",
+                "C:/Program Files (x86)/json-c/include"
             ],
             "defines": [
                 "_DEBUG",

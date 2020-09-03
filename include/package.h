@@ -4,6 +4,8 @@
 #include <stdint.h>
 #include "list.h"
 
+#define PKG_FILE_NAME_SIZE      128
+
 typedef enum {
     PKG_UNKNOWN = -1,
     PKG_OS,             /* 包好系统镜像和boot，boot非必须 */
@@ -19,17 +21,46 @@ typedef struct {
     char    compile[16 + 1];
 } package_version_t;
 
+typedef enum {
+    OS_BLOB_OTHER = -1,
+    OS_BLOB_BOOTLOADER,
+    OS_BLOB_ROOTFS,
+    OS_BLOB_KERNEL
+} os_blob_type_t;
+
+typedef struct {
+    struct list_head node;
+    os_blob_type_t   type;
+    char             md5sum[32];
+    char             name[PKG_FILE_NAME_SIZE];
+} os_blob_t;
+
+typedef struct {
+    struct list_head  blobs;
+    package_version_t version;
+    size_t            napply_id;
+    uint32_t          apply_id[0];
+} os_package_t;
+
 typedef struct {
     struct list_head  node;
     package_version_t version;
     char              md5sum[32];
-    char              name[128];
+    char              name[PKG_FILE_NAME_SIZE];
     size_t            napply_id;
     uint32_t          apply_id[0];
 } multi_os_blob_t;
 
-typedef multi_os_blob_t os_packge_t;
+typedef struct {
+    struct list_head blobs;
+} multi_os_package_t;
 
-extern package_type_t read_package(const char *pkg, struct list_head *blobs);
+typedef struct {
+    package_type_t type;
+    char           path[PATH_MAX];
+    char           package[0];
+} package_t;
+
+extern package_t *read_package(const char *pkg);
 
 #endif /* __UPGRADE_PACKAGE_H__ */

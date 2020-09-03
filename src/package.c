@@ -152,59 +152,188 @@ failure:
     return -1;
 }
 
-package_type_t read_package(const char *pkg, struct list_head *head)
+static os_blob_t *read_os_blob_from_json_array_item(json_object *obj)
+{
+    const char *str;
+    json_object *key;
+    os_blob_t *blob;
+
+    if (obj == NULL || (blob = (os_blob_t *)malloc(sizeof(os_blob_t))) == NULL) {
+        return NULL;
+    }
+
+    memset(blob, 0, sizeof(os_blob_t));
+    INIT_LIST_HEAD(&blob->node);
+    if ((key = json_object_object_get(obj, "name")) == NULL
+            || (str = json_object_get_string(key)) == NULL
+            || json_object_get_string_len(key) >= sizeof(blob->name)) {
+        goto failure;
+    }
+    strncpy(blob->name, str, sizeof(blob->name) - 1);
+
+    if ((key = json_object_object_get(obj, "md5sum")) == NULL
+            || (str = json_object_get_string(key)) == NULL
+            || json_object_get_string_len(key) != sizeof(blob->md5sum)) {
+        goto failure;
+    }
+    memcpy(blob->md5sum, str, sizeof(blob->md5sum));
+
+    if ((key = json_object_object_get(obj, "type")) == NULL
+            || (str = json_object_get_string(key)) == NULL) {
+        goto failure;
+    }
+
+    if (strcmp(str, "rootfs") == 0) {
+        blob->type = OS_BLOB_ROOTFS;
+    } else if (strcmp(str, "kernel") == 0) {
+        blob->type = OS_BLOB_KERNEL;
+    } else if (strcmp(str, "bootloader") == 0) {
+        blob->type = OS_BLOB_BOOTLOADER;
+    } else {
+        blob->type = OS_BLOB_OTHER;
+    }
+
+    return blob;
+failure:
+    free(blob);
+
+    return NULL;
+}
+
+static int read_os_blobs_from_json_obj(json_object *list, struct list_head *header)
+{
+    size_t i, n;
+    json_object *obj;
+    os_blob_t *blob, *tmp;
+
+    if (list == NULL || header == NULL || (n = json_object_array_length(list)) == 0) {
+        return -1;
+    }
+
+    for (i = 0; i < n; ++i) {
+        obj = json_object_array_get_idx(list, i);
+        if (json_object_get_type(obj) != json_type_object) {
+            goto failure;
+        }
+
+        if ((blob = read_os_blob_from_json_array_item(obj)) == NULL) {
+            goto failure;
+        }
+
+        list_add_tail(&blob->node, header);
+    }
+
+    return 0;
+failure:
+    list_for_each_entry_safe(blob, tmp, header, node) {
+        list_del(&blob->node);
+        free(blob);
+    }
+    return -1;
+}
+
+package_t *read_package(const char *pkg)
 {
     int ret;
+    size_t i, n;
     char md5sum[32 + 1];
+    package_t *package;
     package_type_t t;
     json_object *obj;
     json_object *val;
+    json_object *val1;
+    json_object *blob_obj;
+    struct list_head *head;
     multi_os_blob_t *mos_tmp;
     multi_os_blob_t *mos_blob;
+    os_blob_t *os_blob, *os_tmp;
     const char *const tmp_path = "/tmp/.upgrade_check_manifest";
     const char *const manifest = "/tmp/.upgrade_check_manifest/manifest.json";
 
-    t = PKG_UNKNOWN;
-    if (pkg == NULL || head == NULL) {
-        return t;
+    if (pkg == NULL) {
+        return NULL;
     }
 
     if ((ret = shell_command("mkdir -p %s", tmp_path)) < 0) {
-        return t;
+        return NULL;
     }
 
     if ((ret = shell_command(cmd_extract_file, pkg, tmp_path, "manifest.json")) < 0) {
         remove(tmp_path);
-        return t;
+        return NULL;
     }
 
     if ((obj = json_object_from_file(manifest)) == NULL) {
         remove(tmp_path);
-        return t;
+        return NULL;
     }
     remove(tmp_path);
 
+    package = NULL;
     if ((val = json_object_object_get(obj, "type")) == NULL
-            || (t = str2type(json_object_get_string(val))) == PKG_UNKNOWN) {
+            || (t = str2type(json_object_get_string(val))) == PKG_UNKNOWN
+            || (blob_obj = json_object_object_get(obj, "blobs")) == NULL) {
         goto release_json;
     }
 
-    if ((val = json_object_object_get(obj, "blobs")) == NULL) {
-        t = PKG_UNKNOWN;
-        goto release_json;
-    }
-
-    INIT_LIST_HEAD(head);
     switch (t) {
     case PKG_OS:
-        //read_os_blobs_from_json_obj(obj);
+        if ((val = json_object_object_get(obj, "apply id")) == NULL
+                || (n = json_object_array_length(val)) == 0) {
+            goto release_json;
+        }
+
+        i = sizeof(uint32_t) * n + sizeof(package_t) + sizeof(os_package_t);
+        if ((package = (package_t *)malloc(i)) == NULL) {
+            goto release_json;
+        }
+
+        memset(package, 0, i);
+        for (i = 0; i < n; ++i) {
+            val1 = json_object_array_get_idx(val, i);
+            if (json_object_get_type(val1) != json_type_int) {
+                free(package);
+                package = NULL;
+                goto release_json;
+            }
+            ((os_package_t *)package->package)->apply_id[i] = (uint32_t)json_object_get_uint64(val1);
+        }
+
+        head = &((os_package_t *)package->package)->blobs;
+        INIT_LIST_HEAD(head);
+        if (read_os_blobs_from_json_obj(blob_obj, head) < 0) {
+            free(package);
+            package = NULL;
+            goto release_json;
+        }
+
+        /* md5sum check */
+        list_for_each_entry(os_blob, head, node) {
+            if (shell_command_output(md5sum, sizeof(md5sum), cmd_check_md5sum, pkg, os_blob->name) < 0
+                    || memcmp(md5sum, os_blob->md5sum, sizeof(os_blob->md5sum)) != 0) {
+                list_for_each_entry_safe(os_blob, os_tmp, head, node) {
+                    list_del(&os_blob->node);
+                    free(os_blob);
+                }
+                free(package);
+                package = NULL;
+                goto release_json;
+            }
+        }
         break;
     case PKG_PATCH:
         //read_patch_blobs_from_json_obj(obj);
         break;
     case PKG_MULTI_OS:
-        if (read_multi_os_blobs_from_json_obj(val, head) < 0) {
-            t = PKG_UNKNOWN;
+        if ((package = (package_t *)malloc(sizeof(package_t) + sizeof(multi_os_package_t))) == NULL) {
+            goto release_json;
+        }
+
+        head = &((multi_os_package_t *)package->package)->blobs;
+        INIT_LIST_HEAD(head);
+        if (read_multi_os_blobs_from_json_obj(blob_obj, head) < 0) {
+            free(package);
+            package = NULL;
             break;
         }
 
@@ -216,8 +345,9 @@ package_type_t read_package(const char *pkg, struct list_head *head)
                     list_del(&mos_blob->node);
                     free(mos_blob);
                 }
-                t = PKG_UNKNOWN;
-                break;
+                free(package);
+                package = NULL;
+                goto release_json;
             }
         }
         break;
@@ -228,28 +358,27 @@ package_type_t read_package(const char *pkg, struct list_head *head)
     default:
         goto release_json;
     }
+    package->type = t;
+    strncpy(package->path, pkg, sizeof(package->path) - 1);
 
 release_json:
     json_object_put(obj);
-    return t;
+    return package;
 }
 
 #ifdef TEST
 int main(int argc, char *argv[])
 {
-    package_type_t type;
-    struct list_head head;
- 
+    package_t *pkg;
+
     if (argc < 2) {
         return -1;
     }
 
-    if ((type = read_package(argv[1], &head)) == PKG_UNKNOWN) {
+    if ((pkg = read_package(argv[1])) == NULL) {
         fprintf(stderr, "read invalid package\n");
         return -1;
     }
-
-    printf("pkg type %d\n", type);
 
     return 0;
 }

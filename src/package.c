@@ -1,4 +1,5 @@
-﻿#include <stdio.h>
+﻿#include <math.h>
+#include <stdio.h>
 #include <string.h>
 #include <libgen.h>
 #include <limits.h>
@@ -19,6 +20,22 @@ static const struct {
     {PKG_MULTI_OS,      "multi-os"},
     {PKG_MULTI_PATCH,   "multi-patch"}
 };
+
+int decompress_package(const char *dst, const char *pkg, const char *file)
+{
+    return shell_command(cmd_extract_file, pkg, dst, file);
+}
+
+int check_md5sum(const char *path, const char md5sum[32])
+{
+    char buf[33];
+
+    if (shell_command_output(buf, sizeof(buf), "md5sum %s", path) < 0) {
+        return -1;
+    }
+
+    return abs(memcmp(md5sum, buf, 32));
+}
 
 static package_type_t str2type(const char *str)
 {

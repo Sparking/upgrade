@@ -8,144 +8,107 @@
 #include <sys/types.h>
 #include "common.h"
 #include "upgrade.h"
+#include "package.h"
 
-typedef enum {
-    FS_TYPE_EXT3 = 0,
-    FS_TYPE_EXT4,
-    FS_TYPE_UBI,
-} fs_type_t;
-#define FS_TYPE_MAX     (FS_TYPE_UBI + 1)
-#define FS_TYPE_UNKNOWN FS_TYPE_MAX
-
-typedef struct {
-    char dev[32];
-    fs_type_t type;
-} partion_info_t;
-
-static const char *fs_type_strmap[] = {
-    "ext3", "ext4", "ubifs"
-};
-
-const char *fs_type_to_str(const fs_type_t type)
+static int get_device_id(uint32_t *id)
 {
-    return (type < 0 || type >= FS_TYPE_MAX) ? NULL : fs_type_strmap[type];
+    *id = 123;
+
+    return 0;
 }
 
-static fs_type_t str_to_fs_type(const char *type)
+static int upgrade_bootloader(const char *pkg)
 {
-    fs_type_t i;
+    return 0;
+}
 
-    if (type == NULL) {
-        return FS_TYPE_UNKNOWN;
+static int upgrade_kernel(const char *pkg)
+{
+    return 0;
+}
+
+static int upgrade_rootfs(const char *pkg)
+{
+    return 0;
+}
+
+static int upgrade_os(const package_t *pkg)
+{
+    /* get_device_id */
+    size_t i;
+    uint32_t id;
+    os_blob_t *blob;
+    os_package_t *os;
+    char tmp[256];
+
+    if (pkg == NULL) {
+        return -1;
     }
 
-    for (i = 0; i < ARRAY_SIZE(fs_type_strmap); ++i) {
-        if (strcasecmp(type, fs_type_strmap[i]) == 0) {
+    if (get_device_id(&id) != 0) {
+        return -1;
+    }
+
+    os = (os_package_t *)pkg->package;
+    for (i = 0; i < os->napply_id; ++i) {
+        if (os->apply_id[i] == id) {
             break;
         }
     }
 
-    return i;
-}
-
-static int get_using_rootfs_part(partion_info_t *part)
-{
-    int fd;
-    int ret;
-    ssize_t size;
-    char *root, *type;
-    char *buf_s, *word, *mark;
-    char buf[BUFF_SIZE];
-    const char *const info_source = "/proc/cmdline";
-
-    if (part == NULL) {
-        return -EINVAL;
+    if (i >= os->napply_id) {
+        return -1;
     }
 
-    if ((fd = open(info_source, O_RDONLY)) < 0) {
-        return -errno;
-    }
+    list_for_each_entry(blob, &os->blobs, node) {
+        if (decompress_package("/tmp", pkg->path, blob->name) != 0) {
+            continue;
+        }
 
-    if ((size = full_read(fd, buf, BUFF_SIZE - 1)) < 0) {
-        ret = -errno;
-        goto end;
-    }
-    buf[size] = '\0';
+        snprintf(tmp, sizeof(tmp), "/tmp/%s", blob->name);
+        if (check_md5sum(tmp, blob->md5sum) != 0) {
+            continue;
+        }
 
-    root = NULL;
-    type = NULL;
-    for (buf_s = buf; (word = strtok_r(buf_s, " ", &mark)) != NULL; buf_s = NULL) {
-        if (strncmp(word, "root=", 5) == 0) {
-            root = word + 5;
-        } else if (strncmp(word, "rootfstype=", 11) == 0) {
-            type = word + 11;
+        switch (blob->type) {
+        case OS_BLOB_BOOTLOADER:
+            upgrade_bootloader(tmp);
+            break;
+        case OS_BLOB_ROOTFS:
+            upgrade_rootfs(tmp);
+            break;
+        case OS_BLOB_KERNEL:
+            upgrade_kernel(tmp);
+            break;
+        default:
+            break;
         }
     }
-
-    if (root == NULL || type == NULL) {
-        ret = -ENOMSG;
-        goto end;
-    }
-
-    if (!is_device_file(root)) {
-        ret = -ENODEV;
-        goto end;
-    }
-
-    strncpy(part->dev, root, sizeof(part->dev) - 1);
-    if ((part->type = str_to_fs_type(type)) == FS_TYPE_UNKNOWN) {
-        ret = -EINVAL;
-        goto end;
-    }
-    ret = 0;
-end:
-    close(fd);
-
-    return ret;
-}
-
-static int get_backup_rootfs_part(partion_info_t *part)
-{
-    int ret;
-
-    if (part == NULL) {
-        return -EINVAL;
-    }
-
-    if ((ret = get_using_rootfs_part(part)) < 0) {
-        return ret;
-    }
-
-    /* TODO: */
-
-    return 0;
-}
-
-static int upgrade_rootfs(const char *img)
-{
-    int ret;
-    partion_info_t part;
-    char path[PATH_MAX];
-
-    if (img == NULL) {
-        return -EINVAL;
-    }
-
-    memset(path, 0, sizeof(path));
-    if ((ret = get_backup_rootfs_part(&part)) < 0) {
-        return ret;
-    }
-
-    return 0;
 }
 
 int upgrade_package(const char *pkg)
 {
-    if (!file_exist(pkg)) {
-        return -EEXIST;
+    package_t *package;
+
+    if ((package = read_package(pkg)) == NULL) {
+        return -1;
     }
 
-    upgrade_kernel(pkg);
-    upgrade_rootfs(pkg);
+    switch (package->type) {
+    case PKG_MULTI_OS:
+        break;
+    case PKG_OS:
+        upgrade_os(package);
+        break;
+    case PKG_MULTI_PATCH:
+        break;
+    case PKG_PATCH:
+        break;
+    default:
+        free(package);
+        return -1;
+        break;
+    }
+
     return 0;
 }

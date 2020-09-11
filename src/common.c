@@ -8,6 +8,20 @@
 #include <sys/types.h>
 #include "common.h"
 
+void progress_print(void *reserved, const char *fmt, ...)
+{
+    va_list ap;
+
+    va_start(ap, fmt);
+    vprintf(fmt, ap);
+    va_end(ap);
+}
+
+void progress_clearline(const char c)
+{
+    printf("%c\33[2K\r", c);
+}
+
 int shell_command(const char *fmt, ...)
 {
     int ret;
@@ -111,6 +125,31 @@ ssize_t full_read(int fd, void *buf, size_t size)
     total = 0;
     do {
         if ((ret = read(fd, buf + total, size)) < 0) {
+            if (errno != EAGAIN && errno != EINTR) {
+                total = -errno;
+                break;
+            }
+
+            continue;
+        } else if (ret == 0) {
+            break;
+        }
+
+        size -= ret;
+        total += ret;
+    } while (1);
+
+    return total;
+}
+
+ssize_t full_write(int fd, const void *buf, size_t size)
+{
+    ssize_t ret;
+    ssize_t total;
+
+    total = 0;
+    do {
+        if ((ret = write(fd, buf + total, size)) < 0) {
             if (errno != EAGAIN && errno != EINTR) {
                 total = -errno;
                 break;

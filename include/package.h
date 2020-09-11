@@ -63,6 +63,10 @@ typedef struct {
 
 extern package_t *read_package(const char *pkg);
 
+extern const char *package_type2name(const package_type_t t);
+
+extern const char *os_blob_type2name(const os_blob_type_t t);
+
 extern int decompress_package(const char *dst, const char *pkg, const char *file);
 
 extern int check_md5sum(const char *path, const char md5sum[32]);

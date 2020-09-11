@@ -7,7 +7,7 @@ CPPFLAGS := -Wall -Werror -std=gnu99 -MMD -Iinclude -DTEST
 LDFLAGS  :=
 LIBS     := -ljson-c
 
-src := common.c rbtree.c iniparser.c package.c
+src := common.c rbtree.c iniparser.c package.c upgrade.c
 # upgrade.c
 src := $(addprefix src/,$(src))
 deps:= $(patsubst %.c,%.d,$(src))

@@ -21,6 +21,16 @@ static const struct {
     {PKG_MULTI_PATCH,   "multi-patch"}
 };
 
+static const struct {
+    os_blob_type_t type;
+    const char *const name;
+} os_blob_type_map[] = {
+    {OS_BLOB_BOOTLOADER,    "bootloader"},
+    {OS_BLOB_KERNEL,        "kernel"},
+    {OS_BLOB_ROOTFS,        "rootfs"},
+    {OS_BLOB_OTHER,         "other"}
+};
+
 int decompress_package(const char *dst, const char *pkg, const char *file)
 {
     return shell_command(cmd_extract_file, pkg, dst, file);
@@ -55,6 +65,38 @@ static package_type_t str2type(const char *str)
     }
 
     return type;
+}
+
+const char *package_type2name(const package_type_t t)
+{
+    int i;
+    const char *name;
+
+    name = "unknown";
+    for (i = 0; i < ARRAY_SIZE(package_type_map); ++i) {
+        if (package_type_map[i].type == t) {
+            name = package_type_map[i].name;
+            break;
+        }
+    }
+
+    return name;
+}
+
+const char *os_blob_type2name(const os_blob_type_t t)
+{
+    int i;
+    const char *name;
+
+    name = "unknown";
+    for (i = 0; i < ARRAY_SIZE(os_blob_type_map); ++i) {
+        if (os_blob_type_map[i].type == t) {
+            name = os_blob_type_map[i].name;
+            break;
+        }
+    }
+
+    return name;
 }
 
 int str2version(const char *str, package_version_t *ver)
@@ -107,7 +149,7 @@ static multi_os_blob_t *read_multi_os_blob_from_json_array_item(json_object *obj
             goto failure;
         }
 
-        blob->apply_id[i] = (uint32_t)json_object_get_uint64(value);
+        blob->apply_id[i] = (uint32_t)json_object_get_int(value);
     }
 
     if ((key = json_object_object_get(obj, "name")) == NULL
@@ -313,7 +355,13 @@ package_t *read_package(const char *pkg)
                 package = NULL;
                 goto release_json;
             }
-            ((os_package_t *)package->package)->apply_id[i] = (uint32_t)json_object_get_uint64(val1);
+            ((os_package_t *)package->package)->apply_id[i] = (uint32_t)json_object_get_int(val1);
+        }
+        ((os_package_t *)package->package)->napply_id = n;
+
+        if ((val = json_object_object_get(obj, "apply id")) != NULL
+                && json_object_get_type(val) == json_type_string) {
+            str2version(json_object_get_string(val), &((os_package_t *)package->package)->version);
         }
 
         head = &((os_package_t *)package->package)->blobs;
@@ -382,21 +430,3 @@ release_json:
     json_object_put(obj);
     return package;
 }
-
-#ifdef TEST
-int main(int argc, char *argv[])
-{
-    package_t *pkg;
-
-    if (argc < 2) {
-        return -1;
-    }
-
-    if ((pkg = read_package(argv[1])) == NULL) {
-        fprintf(stderr, "read invalid package\n");
-        return -1;
-    }
-
-    return 0;
-}
-#endif

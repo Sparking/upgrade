@@ -33,6 +33,16 @@ static const struct {
 
 int decompress_package(const char *dst, const char *pkg, const char *file)
 {
+    int ret;
+
+    if (dst == NULL) {
+        return -1;
+    }
+
+    if (access(dst, F_OK) != 0 && (ret = shell_command("mkdir -p %s", dst)) != 0) {
+        return -1;
+    }
+
     return shell_command(cmd_extract_file, pkg, dst, file);
 }
 
@@ -313,25 +323,30 @@ package_t *read_package(const char *pkg)
         return NULL;
     }
 
+    progress_print(NULL, "Read package from %s.\n", pkg);
     if ((ret = shell_command("mkdir -p %s", tmp_path)) < 0) {
         return NULL;
     }
 
     if ((ret = shell_command(cmd_extract_file, pkg, tmp_path, "manifest.json")) < 0) {
-        remove(tmp_path);
+        progress_print(NULL, "Package does not contain the valid information!\n");
+        unlink(manifest);
         return NULL;
     }
 
     if ((obj = json_object_from_file(manifest)) == NULL) {
-        remove(tmp_path);
+        progress_print(NULL, "The package information is broken!\n");
+        unlink(manifest);
         return NULL;
     }
-    remove(tmp_path);
+    unlink(manifest);
 
+    progress_print(NULL, "Starting to parse package information...\n");
     package = NULL;
     if ((val = json_object_object_get(obj, "type")) == NULL
             || (t = str2type(json_object_get_string(val))) == PKG_UNKNOWN
             || (blob_obj = json_object_object_get(obj, "blobs")) == NULL) {
+        progress_print(NULL, "The package information is not available!\n");
         goto release_json;
     }
 
@@ -339,11 +354,14 @@ package_t *read_package(const char *pkg)
     case PKG_OS:
         if ((val = json_object_object_get(obj, "apply id")) == NULL
                 || (n = json_object_array_length(val)) == 0) {
+            progress_print(NULL, "The package is unavailable for upgrading!\n");
             goto release_json;
         }
 
         i = sizeof(uint32_t) * n + sizeof(package_t) + sizeof(os_package_t);
         if ((package = (package_t *)malloc(i)) == NULL) {
+            progress_clearline();
+            progress_print(NULL, "System has no enough memories to allocate!\n");
             goto release_json;
         }
 
@@ -353,15 +371,18 @@ package_t *read_package(const char *pkg)
             if (json_object_get_type(val1) != json_type_int) {
                 free(package);
                 package = NULL;
+                progress_clearline();
+                progress_print(NULL, "The package is unavailable for upgrading!\n");
                 goto release_json;
             }
             ((os_package_t *)package->package)->apply_id[i] = (uint32_t)json_object_get_int(val1);
         }
         ((os_package_t *)package->package)->napply_id = n;
 
-        if ((val = json_object_object_get(obj, "apply id")) != NULL
+        if ((val = json_object_object_get(obj, "version")) != NULL
                 && json_object_get_type(val) == json_type_string) {
             str2version(json_object_get_string(val), &((os_package_t *)package->package)->version);
+            progress_print(NULL, "The package version is %s.\n", json_object_get_string(val));
         }
 
         head = &((os_package_t *)package->package)->blobs;
@@ -369,13 +390,16 @@ package_t *read_package(const char *pkg)
         if (read_os_blobs_from_json_obj(blob_obj, head) < 0) {
             free(package);
             package = NULL;
+            progress_print(NULL, "The package is unavailable for upgrading!\n");
             goto release_json;
         }
 
         /* md5sum check */
         list_for_each_entry(os_blob, head, node) {
+            progress_print(NULL, "Check md5sum of the package %s file...", os_blob_type2name(os_blob->type));
             if (shell_command_output(md5sum, sizeof(md5sum), cmd_check_md5sum, pkg, os_blob->name) < 0
                     || memcmp(md5sum, os_blob->md5sum, sizeof(os_blob->md5sum)) != 0) {
+                progress_print(NULL, "\tfailed\n");
                 list_for_each_entry_safe(os_blob, os_tmp, head, node) {
                     list_del(&os_blob->node);
                     free(os_blob);
@@ -384,10 +408,8 @@ package_t *read_package(const char *pkg)
                 package = NULL;
                 goto release_json;
             }
+            progress_print(NULL, "\tpass\n");
         }
-        break;
-    case PKG_PATCH:
-        //read_patch_blobs_from_json_obj(obj);
         break;
     case PKG_MULTI_OS:
         if ((package = (package_t *)malloc(sizeof(package_t) + sizeof(multi_os_package_t))) == NULL) {
@@ -416,8 +438,9 @@ package_t *read_package(const char *pkg)
             }
         }
         break;
+    case PKG_PATCH:
+        break;
     case PKG_MULTI_PATCH:
-        //read_multi_patch_blobs_from_json_obj(obj);
         break;
     case PKG_UNKNOWN:
     default:

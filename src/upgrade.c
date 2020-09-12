@@ -65,19 +65,12 @@ static int upgrade_os(const package_t *pkg)
     list_for_each_entry(blob, &os->blobs, node) {
         name = os_blob_type2name(blob->type);
         progress_print(NULL, "Decompressing %s file %s...", name, blob->name);
-        if (decompress_package("/tmp", pkg->path, blob->name) != 0) {
+        if (decompress_package("/tmp/.up_dcm", pkg->path, blob->name) != 0) {
             progress_print(NULL, " fail\n");
             continue;
         }
-        progress_clearline(' ');
-        progress_print(NULL, "Check %s md5sum...", name);
-        snprintf(tmp, sizeof(tmp), "/tmp/%s", blob->name);
-        if (check_md5sum(tmp, blob->md5sum) != 0) {
-            progress_print(NULL, " fail\n");
-            continue;
-        }
-        progress_clearline(' ');
-        progress_print(NULL, "Upgrading %s...", name);
+        progress_print(NULL, " done\nUpgrading %s...", name);
+        snprintf(tmp, sizeof(tmp), "/tmp/.up_dcm/%s", blob->name);
         switch (blob->type) {
         case OS_BLOB_BOOTLOADER:
             ret = upgrade_bootloader(tmp);
@@ -94,11 +87,12 @@ static int upgrade_os(const package_t *pkg)
             break;
         }
 
+        remove(tmp);
         if (ret != 0) {
             progress_print(NULL, " fail\n");
             break;
         } else {
-            progress_clearline(' ');
+            progress_print(NULL, " done\n");
         }
     }
 
@@ -115,14 +109,11 @@ int upgrade_package(const char *pkg)
 {
     package_t *package;
 
-    progress_print(NULL, "Checking package file %s...", pkg);
     if ((package = read_package(pkg)) == NULL) {
-        progress_clearline(' ');
+        progress_clearline();
         progress_print(NULL, "Package is invalid, abort!\n");
         return -1;
     }
-    progress_clearline(' ');
-    progress_print(NULL, "Get package type %s.\n", package_type2name(package->type));
 
     switch (package->type) {
     case PKG_MULTI_OS:

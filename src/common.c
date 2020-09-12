@@ -17,9 +17,9 @@ void progress_print(void *reserved, const char *fmt, ...)
     va_end(ap);
 }
 
-void progress_clearline(const char c)
+void progress_clearline(void)
 {
-    printf("%c\33[2K\r", c);
+    printf("\r\33[2K\r");
 }
 
 int shell_command(const char *fmt, ...)

@@ -10,7 +10,7 @@
 
 extern void progress_print(void *reserved, const char *fmt, ...);
 
-extern void progress_clearline(const char c);
+extern void progress_clearline(void);
 
 extern size_t clear_line_crlf(char *str);
 

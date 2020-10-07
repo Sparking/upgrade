@@ -10,6 +10,7 @@
 
 const char *const cmd_check_md5sum = "tar -O -I zstd -xf %s %s | md5sum";
 const char *const cmd_extract_file = "tar -I zstd -xf %s -C %s %s";
+const char *const cmd_package_size = "tar -I zstd -tvf %s %s | awk '{print $3}'";
 
 static const struct {
     package_type_t type;
@@ -396,10 +397,16 @@ package_t *read_package(const char *pkg)
 
         /* md5sum check */
         list_for_each_entry(os_blob, head, node) {
-            progress_print(NULL, "Check md5sum of the package %s file...", os_blob_type2name(os_blob->type));
+            progress_print(NULL, "Checking %s file...", os_blob_type2name(os_blob->type), os_blob->name);
+            if (shell_command_output(md5sum, sizeof(md5sum), cmd_package_size, pkg, os_blob->name) < 0) {
+                progress_print(NULL, "\tfail to get file size\n");
+                goto release_all_os_blob;
+            }
+            os_blob->size = atoi(md5sum);
             if (shell_command_output(md5sum, sizeof(md5sum), cmd_check_md5sum, pkg, os_blob->name) < 0
                     || memcmp(md5sum, os_blob->md5sum, sizeof(os_blob->md5sum)) != 0) {
-                progress_print(NULL, "\tfailed\n");
+                progress_print(NULL, "\tfail to get file md5sum\n");
+release_all_os_blob:
                 list_for_each_entry_safe(os_blob, os_tmp, head, node) {
                     list_del(&os_blob->node);
                     free(os_blob);
@@ -408,7 +415,15 @@ package_t *read_package(const char *pkg)
                 package = NULL;
                 goto release_json;
             }
-            progress_print(NULL, "\tpass\n");
+            progress_clearline();
+            progress_print(NULL, "[%s]\n"
+                                 "name: %s\n"
+                                 "size: %zu\n"
+                                 "md5sum: %.32s\n",
+                                 os_blob_type2name(os_blob->type),
+                                 os_blob->name,
+                                 os_blob->size,
+                                 os_blob->md5sum);
         }
         break;
     case PKG_MULTI_OS:

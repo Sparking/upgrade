@@ -7,6 +7,7 @@
 #include "list.h"
 #include "rbtree.h"
 #include "iniparser.h"
+#include "common.h"
 
 #define INI_LINE_MAXSIZE    2048
 
@@ -509,7 +510,9 @@ int ini_config_saveas(INI_CONFIG config, const char *file)
     int ret;
     FILE *fp;
 
-    truncate(file, 0);
+    if (file_exist(file) && truncate(file, 0) != 0) {
+        unlink(file);
+    }
 
     fp = fopen(file, "w");
     if (fp == NULL)

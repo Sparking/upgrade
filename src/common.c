@@ -102,6 +102,13 @@ bool is_device_file(const char *path)
     return (file_exist(path) && stat(path, &st) == 0 && (st.st_mode & (S_IFBLK | S_IFCHR)));
 }
 
+bool is_dir(const char *path)
+{
+    struct stat st;
+
+    return (file_exist(path) && stat(path, &st) == 0 && S_ISDIR(st.st_mode));
+}
+
 ssize_t file_size(const char *path)
 {
     struct stat st;
@@ -162,6 +169,7 @@ ssize_t full_write(int fd, const void *buf, size_t size)
 
         size -= ret;
         total += ret;
+        fsync(fd);
     } while (1);
 
     return total;

@@ -31,6 +31,7 @@ typedef enum {
 typedef struct {
     struct list_head node;
     os_blob_type_t   type;
+    size_t           size;
     char             md5sum[32];
     char             name[PKG_FILE_NAME_SIZE];
 } os_blob_t;
